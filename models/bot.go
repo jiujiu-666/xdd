@@ -17,7 +17,7 @@ import (
 var SendQQ = func(a int64, b interface{}) {
 
 }
-var SendQQGroup = func(aint64, b int64, c interface{}) {
+var SendQQGroup = func(a int64, b int64, c interface{}) {
 
 }
 var ListenQQPrivateMessage = func(uid int64, msg string) {
@@ -27,8 +27,7 @@ var ListenQQPrivateMessage = func(uid int64, msg string) {
 var ListenQQGroupMessage = func(gid int64, uid int64, msg string) {
 	if gid == Config.QQGroupID {
 		if Config.QbotPublicMode {
-
-			SendQQGroup(gid, uid, handleMessage(msg, "qqg", int(gid), int(uid)))
+			SendQQGroup(gid, uid, handleMessage(msg, "qqg", int(uid), int(gid)))
 		} else {
 			SendQQ(uid, handleMessage(msg, "qq", int(uid)))
 		}
@@ -57,37 +56,20 @@ var sendMessagee = func(msg string, msgs ...interface{}) {
 		return
 	}
 	tp := msgs[1].(string)
-	id := msgs[2].(int)
+	uid := msgs[2].(int)
+	gid := 0
+	if len(msgs) >= 4 {
+		gid = msgs[3].(int)
+	}
 	switch tp {
 	case "tg":
-		SendTgMsg(id, msg)
+		SendTgMsg(uid, msg)
+	case "tgg":
+		SendTggMsg(gid, uid, msg)
 	case "qq":
-		SendQQ(int64(id), msg)
+		SendQQ(int64(uid), msg)
 	case "qqg":
-		SendQQGroup(int64(id), int64(msgs[3].(int)), msg)
-	}
-}
-
-var sendAdminMessagee = func(msg string, msgs ...interface{}) {
-	if len(msgs) == 0 {
-		return
-	}
-	tp := msgs[1].(string)
-	id := msgs[2].(int)
-	switch tp {
-	case "tg":
-		if Config.TelegramUserID == id {
-			SendTgMsg(id, msg)
-		}
-	case "qq":
-		if int(Config.QQID) == id {
-			SendQQ(int64(id), msg)
-		}
-	case "qqg":
-		uid := msgs[3].(int)
-		if int(Config.QQID) == uid {
-			SendQQGroup(int64(id), int64(uid), msg)
-		}
+		SendQQGroup(int64(gid), int64(uid), msg)
 	}
 }
 
@@ -96,18 +78,13 @@ var isAdmin = func(msgs ...interface{}) bool {
 		return false
 	}
 	tp := msgs[1].(string)
-	id := msgs[2].(int)
+	uid := msgs[2].(int)
 	switch tp {
-	case "tg":
-		if Config.TelegramUserID == id {
+	case "tg", "tgg":
+		if int(Config.TelegramUserID) == uid {
 			return true
 		}
-	case "qq":
-		if int(Config.QQID) == id {
-			return true
-		}
-	case "qqg":
-		uid := msgs[3].(int)
+	case "qq", "qqg":
 		if int(Config.QQID) == uid {
 			return true
 		}
@@ -118,22 +95,31 @@ var isAdmin = func(msgs ...interface{}) bool {
 var handleMessage = func(msgs ...interface{}) interface{} {
 	msg := msgs[0].(string)
 	tp := msgs[1].(string)
-	id := msgs[2].(int)
+	uid := msgs[2].(int)
+	gid := 0
+	if len(msgs) >= 4 {
+		gid = msgs[3].(int)
+	}
+
 	switch msg {
+	case "取消屏蔽":
+		if !isAdmin(msgs...) {
+			return "你没有权限操作"
+		}
+		e := db.Model(JdCookie{}).Where(fmt.Sprintf("%s != ?", Hack), False).Update(Hack, False).RowsAffected
+		Save <- &JdCookie{}
+		return fmt.Sprintf("操作成功，更新%d条记录", e)
 	case "status", "状态":
 		if !isAdmin(msgs...) {
 			return "你没有权限操作"
 		}
 		return Count()
-	case "sign", "打卡":
-		return "打卡成功"
+	case "打卡", "签到", "sign":
+		NewActiveUser(tp, uid, msgs...)
+	case "许愿币":
+		return fmt.Sprintf("余额%d", GetCoin(uid))
 	case "qrcode", "扫码", "二维码", "scan":
-		url := ""
-		if tp == "qqg" {
-			url = fmt.Sprintf("http://127.0.0.1:%d/api/login/qrcode.png?%vid=%v&qqguid=%v", web.BConfig.Listen.HTTPPort, tp, id, msgs[3].(int))
-		} else {
-			url = fmt.Sprintf("http://127.0.0.1:%d/api/login/qrcode.png?%vid=%v", web.BConfig.Listen.HTTPPort, tp, id)
-		}
+		url := fmt.Sprintf("http://127.0.0.1:%d/api/login/qrcode.png?tp=%s&uid=%d&gid=%d", web.BConfig.Listen.HTTPPort, tp, uid, gid)
 		rsp, err := httplib.Get(url).Response()
 		if err != nil {
 			return nil
@@ -151,19 +137,27 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 		if !isAdmin(msgs...) {
 			return "你没有权限操作"
 		}
-		sendAdminMessagee("小滴滴重启程序", msgs...)
+		sendMessagee("小滴滴重启程序", msgs...)
 		Daemon()
 		return nil
+	case "任务列表":
+		rt := ""
+		for i := range Config.Repos {
+			for j := range Config.Repos[i].Task {
+				rt += fmt.Sprintf("%s\t%s\n", Config.Repos[i].Task[j].Title, Config.Repos[i].Task[j].Cron)
+			}
+		}
+		return rt
 	case "查询", "query":
 		cks := GetJdCookies()
 		tmp := []JdCookie{}
 		for _, ck := range cks {
-			if tp == "qq" {
-				if ck.QQ == id {
+			if tp == "qq" || tp == "qqg" {
+				if ck.QQ == uid {
 					tmp = append(tmp, ck)
 				}
-			} else if tp == "qqg" {
-				if ck.QQ == msgs[3].(int) {
+			} else if tp == "tg" || tp == "tgg" {
+				if ck.Telegram == uid {
 					tmp = append(tmp, ck)
 				}
 			}
@@ -177,11 +171,12 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 		return nil
 	default:
 		{ //tyt
-			ss := regexp.MustCompile(`packetId=(\S+!!)`).FindStringSubmatch(msg)
+			ss := regexp.MustCompile(`packetId=(\S+)(&|&amp;)currentActId`).FindStringSubmatch(msg)
 			if len(ss) > 0 {
-				runTask(&Task{Path: "jd_tyt.js", Envs: []Env{
-					{Name: "tytpacketId", Value: ss[1]},
-				}}, msgs...)
+				if Cdle {
+					return "推毛线啊"
+				}
+				runTask(&Task{Path: "jd_tyt.js"}, msgs...)
 				return nil
 			}
 		}
@@ -196,30 +191,31 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 					}
 					if CookieOK(&ck) {
 						xyb++
-						if tp == "qq" {
-							ck.QQ = id
-
-						} else if tp == "tg" {
-							ck.Telegram = id
-						} else if tp == "qqg" {
-							ck.QQ = msgs[3].(int)
+						if tp == "qq" || tp == "qqg" {
+							ck.QQ = uid
+						} else if tp == "tg" || tp == "tgg" {
+							ck.Telegram = uid
 						}
-						if nck, err := GetJdCookie(ck.PtPin); err == nil {
-							nck.InPool(ck.PtKey)
-							msg := fmt.Sprintf("更新账号，%s", ck.PtPin)
-							(&JdCookie{}).Push(msg)
-							sendMessagee("许愿币+1", msgs...)
-							logs.Info(msg)
+						if HasKey(ck.PtKey) {
+							sendMessagee(fmt.Sprintf("作弊，许愿币-1，余额%d", RemCoin(uid, 1)), msgs...)
 						} else {
-							if Cdle {
-								ck.Hack = True
+							if nck, err := GetJdCookie(ck.PtPin); err == nil {
+								nck.InPool(ck.PtKey)
+								msg := fmt.Sprintf("更新账号，%s", ck.PtPin)
+								(&JdCookie{}).Push(msg)
+								logs.Info(msg)
+							} else {
+								if Cdle {
+									ck.Hack = True
+								}
+								NewJdCookie(&ck)
+								msg := fmt.Sprintf("添加账号，%s", ck.PtPin)
+								sendMessagee(fmt.Sprintf("很棒，许愿币+1，余额%d", AddCoin(uid)), msgs...)
+								logs.Info(msg)
 							}
-							NewJdCookie(&ck)
-							msg := fmt.Sprintf("添加账号，%s", ck.PtPin)
-							(&JdCookie{}).Push(msg)
-							sendMessagee("许愿币+1", msgs...)
-							logs.Info(msg)
 						}
+					} else {
+						sendMessagee(fmt.Sprintf("无效，许愿币-1，余额%d", RemCoin(uid, 1)), msgs...)
 					}
 				}
 				go func() {
@@ -233,6 +229,8 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 			if len(s) > 0 {
 				v := s[2]
 				switch s[1] {
+				case "send":
+					b.Send(tgg, v)
 				case "查询", "query":
 					if !isAdmin(msgs...) {
 						return "你没有权限操作"
@@ -274,20 +272,13 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 					return nil
 
 				case "许愿":
-					if tp == "qqg" {
-						id = msgs[3].(int)
-					}
-					b := 0
-					for _, ck := range GetJdCookies() {
-						if id == ck.QQ || id == ck.Telegram {
-							b++
-						}
-					}
-					if b <= 0 {
-						return "许愿币不足"
+					b := GetCoin(uid)
+					if b < 5 {
+						return "许愿币不足，需要5个许愿币。"
 					} else {
-						(&JdCookie{}).Push(fmt.Sprintf("%d许愿%s，许愿币余额%d。", id, v, b))
-						return "收到许愿"
+						(&JdCookie{}).Push(fmt.Sprintf("%d许愿%s，许愿币余额%d。", uid, v, b))
+
+						return fmt.Sprintf("收到许愿，已扣除5个许愿币，余额%d。", RemCoin(uid, 5))
 					}
 				case "扣除许愿币":
 					id, _ := strconv.Atoi(v)
@@ -308,14 +299,22 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 					}
 					return fmt.Sprintf("操作成功，%d剩余许愿币%d", id, b)
 				case "run", "执行":
+					if !isAdmin(msgs...) {
+						return "你没有权限操作"
+					}
 					runTask(&Task{Path: v}, msgs...)
+				case "cmd", "command":
+					if !isAdmin(msgs...) {
+						return "你没有权限操作"
+					}
+					cmd(v, msgs...)
 				}
 
 			}
 		}
 		{
 			o := false
-			for _, v := range regexp.MustCompile(`京东账号\d*（(.*)）(.*)】(.*)`).FindAllStringSubmatch(msg, -1) {
+			for _, v := range regexp.MustCompile(`京东账号\d*（(.*)）(.*)】(\S*)`).FindAllStringSubmatch(msg, -1) {
 				if !strings.Contains(v[3], "种子") && !strings.Contains(v[3], "undefined") {
 					pt_pin := url.QueryEscape(v[1])
 					for key, ss := range map[string][]string{
@@ -355,6 +354,14 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 					rsp, err := httplib.Get(url).Response()
 					if err != nil {
 						return nil
+					}
+					ctp := rsp.Header.Get("content-type")
+					if ctp == "" {
+						rsp.Header.Get("Content-Type")
+					}
+					if strings.Contains(ctp, "text") || strings.Contains(ctp, "json") {
+						data, _ := ioutil.ReadAll(rsp.Body)
+						return string(data)
 					}
 					return rsp
 				}

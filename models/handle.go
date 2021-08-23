@@ -24,7 +24,7 @@ func initHandle() {
 			cks := GetJdCookies()
 			tmp := []JdCookie{}
 			for _, ck := range cks {
-				if ck.Priority >= 0 {
+				if ck.Priority >= 0 && ck.Hack != True {
 					tmp = append(tmp, ck)
 				}
 			}
@@ -62,13 +62,14 @@ if(pins){
 }
 module.exports = cookies`, cookies))
 			f.Close()
-			tmp = []JdCookie{}
-			for _, ck := range cks {
-				if ck.Hack == False {
-					tmp = append(tmp, ck)
-				}
-			}
-			cks = tmp
+			go CopyConfigAll()
+			// tmp = []JdCookie{}
+			// for _, ck := range cks {
+			// 	if ck.Hack != True {
+			// 		tmp = append(tmp, ck)
+			// 	}
+			// }
+			// cks = tmp
 			if Config.Mode == Parallel {
 				for i := range Config.Containers {
 					(&Config.Containers[i]).read()
