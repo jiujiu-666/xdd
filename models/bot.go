@@ -65,7 +65,7 @@ var sendMessagee = func(msg string, msgs ...interface{}) {
 	case "tg":
 		SendTgMsg(uid, msg)
 	case "tgg":
-		SendTggMsg(gid, uid, msg)
+		SendTggMsg(gid, uid, msg, msgs[4].(int), msgs[5].(string))
 	case "qq":
 		SendQQ(int64(uid), msg)
 	case "qqg":
@@ -120,6 +120,9 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 		return fmt.Sprintf("余额%d", GetCoin(uid))
 	case "qrcode", "扫码", "二维码", "scan":
 		url := fmt.Sprintf("http://127.0.0.1:%d/api/login/qrcode.png?tp=%s&uid=%d&gid=%d", web.BConfig.Listen.HTTPPort, tp, uid, gid)
+		if tp == "tgg" {
+			url += fmt.Sprintf("&mid=%v&unm=%v", msgs[4], msgs[5])
+		}
 		rsp, err := httplib.Get(url).Response()
 		if err != nil {
 			return nil
@@ -140,6 +143,11 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 		sendMessagee("小滴滴重启程序", msgs...)
 		Daemon()
 		return nil
+	case "get-ua":
+		if !isAdmin(msgs...) {
+			return "你没有权限操作"
+		}
+		return ua
 	case "任务列表":
 		rt := ""
 		for i := range Config.Repos {
@@ -173,10 +181,13 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 		{ //tyt
 			ss := regexp.MustCompile(`packetId=(\S+)(&|&amp;)currentActId`).FindStringSubmatch(msg)
 			if len(ss) > 0 {
-				if Cdle {
-					return "推毛线啊"
+				if !isAdmin(msgs...) {
+					return "你没有权限操作"
 				}
-				runTask(&Task{Path: "jd_tyt.js"}, msgs...)
+				runTask(&Task{Path: "jd_tyt.js", Envs: []Env{
+					{Name: "tytpacketId", Value: ss[1]},
+					// {Name: "pins", Value: "xxxx"},
+				}}, msgs...)
 				return nil
 			}
 		}
@@ -280,6 +291,13 @@ var handleMessage = func(msgs ...interface{}) interface{} {
 
 						return fmt.Sprintf("收到许愿，已扣除5个许愿币，余额%d。", RemCoin(uid, 5))
 					}
+				case "set-ua":
+					if !isAdmin(msgs...) {
+						return "你没有权限操作"
+					}
+					db.Create(&UserAgent{Content: v})
+					ua = v
+					return "已更新User-Agent。"
 				case "扣除许愿币":
 					id, _ := strconv.Atoi(v)
 					b := 0
